@@ -1,0 +1,22 @@
+{
+  "learn_group_ids": {
+    "description": "监听学习的群号白名单",
+    "type": "list",
+    "items": { "type": "string" },
+    "hint": "填入群号。如果列表不为空，则只学习列表内群聊的消息；如果留空，则默认学习所有群聊。",
+    "default": []
+  },
+  "reply_group_ids": {
+    "description": "允许随机回复的群号白名单",
+    "type": "list",
+    "items": { "type": "string" },
+    "hint": "填入群号。如果列表不为空，则只在列表内的群聊触发随机回复；如果留空，则默认在所有群赖触发。",
+    "default": []
+  },
+  "random_reply_rate": {
+    "description": "随机回复概率 (0.0 - 1.0)",
+    "type": "float",
+    "default": 0.1,
+    "hint": "范围 0到1。0.1 代表 10% 的概率触发主动回复。"
+  }
+}
