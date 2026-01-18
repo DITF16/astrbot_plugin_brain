@@ -1,0 +1,6 @@
+name: astrbot_plugin_brain
+display_name: 夏娃模型
+desc: 一个基于认知图谱的类脑AI，会通过群聊自学习
+version: v1.0.0
+author: DITF16
+repo: https://github.com/DITF16/astrbot_plugin_brain
