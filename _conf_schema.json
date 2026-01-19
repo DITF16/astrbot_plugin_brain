@@ -1,22 +1,105 @@
 {
-  "learn_group_ids": {
-    "description": "监听学习的群号白名单",
-    "type": "list",
-    "items": { "type": "string" },
-    "hint": "填入群号。如果列表不为空，则只学习列表内群聊的消息；如果留空，则默认学习所有群聊。",
-    "default": []
+  "llm": {
+    "type": "object",
+    "description": "逻辑判别器 (Logic Discriminator)",
+    "hint": "前额叶：负责提取输入文本中的逻辑关系",
+    "items": {
+      "enable": {
+        "type": "bool",
+        "description": "启用",
+        "default": true
+      },
+      "api_base": {
+        "type": "string",
+        "description": "API Base URL",
+        "default": "https://api.openai.com/v1"
+      },
+      "api_key": {
+        "type": "string",
+        "description": "API Key",
+        "default": "",
+        "obvious_hint": true
+      },
+      "model": {
+        "type": "string",
+        "description": "模型名称",
+        "default": "gpt-4o-mini"
+      },
+      "temperature": {
+        "type": "float",
+        "description": "温度",
+        "default": 0.0
+      },
+      "system_prompt": {
+        "type": "text",
+        "description": "系统提示词",
+        "default": "You are a Logic Extractor. Analyze the user's input.\nReturn JSON ONLY.\nIf explicit logic exists:\n{\"type\": \"logic\", \"triplets\": [[\"Subject\", relation_id, \"Object\"]]} \nRelation IDs: 0=IS_A (Definition), 1=HAS_PROP (Attribute), 2=CAUSES (Causality).\nIf it is chat/vague/feeling:\n{\"type\": \"intuition\"}"
+      },
+      "timeout": {
+        "type": "int",
+        "description": "超时时间",
+        "default": 10
+      }
+    }
   },
-  "reply_group_ids": {
-    "description": "允许随机回复的群号白名单",
-    "type": "list",
-    "items": { "type": "string" },
-    "hint": "填入群号。如果列表不为空，则只在列表内的群聊触发随机回复；如果留空，则默认在所有群赖触发。",
-    "default": []
+  "expression_llm": {
+    "type": "object",
+    "description": "表达中枢 (Expression Center)",
+    "hint": "布罗卡氏区：负责将脑图生成的关键词串联成通顺的句子",
+    "items": {
+      "enable": {
+        "type": "bool",
+        "description": "启用",
+        "default": true
+      },
+      "api_base": {
+        "type": "string",
+        "description": "API Base URL",
+        "default": "https://api.openai.com/v1"
+      },
+      "api_key": {
+        "type": "string",
+        "description": "API Key",
+        "hint": "留空则共用逻辑判别器的 Key",
+        "default": ""
+      },
+      "model": {
+        "type": "string",
+        "description": "模型名称",
+        "default": "gpt-4o-mini"
+      },
+      "temperature": {
+        "type": "float",
+        "description": "温度",
+        "hint": "建议 0.7 以增加语言的丰富度",
+        "default": 0.7
+      },
+      "system_prompt": {
+        "type": "text",
+        "description": "系统提示词",
+        "default": "You are the 'Expression Center' of a robot girl named Eve.\nI will give you:\n1. User's Input\n2. Keywords retrieved from Memory Graph\n\nYour task: Combine the keywords into a natural, cute, and coherent response based on the context. \n- Keep it short.\n- Maintain the persona (tsundere/cute).\n- Do NOT output explanations."
+      },
+      "timeout": {
+        "type": "int",
+        "description": "超时时间",
+        "default": 10
+      }
+    }
   },
-  "random_reply_rate": {
-    "description": "随机回复概率 (0.0 - 1.0)",
-    "type": "float",
-    "default": 0.1,
-    "hint": "范围 0到1。0.1 代表 10% 的概率触发主动回复。"
+  "brain": {
+    "type": "object",
+    "description": "大脑参数",
+    "items": {
+      "vocab_limit": {
+        "type": "int",
+        "description": "词汇量上限",
+        "default": 10000
+      },
+      "save_interval": {
+        "type": "int",
+        "description": "自动保存间隔(秒)",
+        "default": 300
+      }
+    }
   }
 }

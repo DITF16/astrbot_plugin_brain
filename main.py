@@ -7,76 +7,67 @@ from .brain_interface import BrainInterface
 
 PLUGIN_NAME = "astrbot_plugin_brain"
 DATA_DIR = StarTools.get_data_dir(PLUGIN_NAME)
-# 路径: /AstrBot/data/plugin_data/astrbot_plugin_brain/my_brain.pth
 BRAIN_PATH = DATA_DIR / "my_brain.pth"
 
 class CognitiveBrainPlugin(Star):
     """
-    [V3.0] 认知大脑插件
+    [V3.3] 双重编码大脑 + 表达中枢
     特性:
-    1. Hebbian Learning (联想学习)
-    2. Logical Imprinting (逻辑刻印)
-    3. Pressure-Driven Forgetting (压力驱动遗忘)
+    1. Dual Coding (LLM Logic + Hebbian Intuition)
+    2. Reinforcement Learning
+    3. Sleep Consolidation
+    4. Expression Center (Broca's Area)
     """
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
-        # 初始化大脑接口
-        self.brain = BrainInterface(model_path=BRAIN_PATH, vocab_limit=10000)
+        self.config = config
         
-        # 记录上一句回复的内容，用于RL (Reinforcement Learning)
-        # 格式: {user_id: [indices]}
+        brain_config = config.get("brain")
+        if not brain_config:
+            brain_config = {}
+
+        vocab_limit = brain_config.get("vocab_limit", 10000)
+        
+        self.brain = BrainInterface(
+            config=dict(config), 
+            model_path=BRAIN_PATH, 
+            vocab_limit=vocab_limit
+        )
+        
         self.last_reply_indices = {}
 
+    # === 修复：回退到标准的 event_message_type 装饰器 ===
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def on_message(self, event: AstrMessageEvent):
         """
-        监听群聊消息:
-        1. 只要你在说话，我就在学习 (Passive Learning)
-        2. 如果你叫我的名字，或者 @我，我会回复 (Active Reply)
+        监听所有消息
         """
+        if not event.message_obj.group_id:
+            return
+
         text = event.message_str
         user_id = event.get_sender_id()
 
-        # === 1. 被动学习 (Listening) ===
-        # 无论是否回复，都在默默强化突触
-        # 过滤掉指令类消息
+        # === 1. 双重编码学习 ===
         if not text.startswith("/") and len(text) > 1:
-            loss = self.brain.learn(text)
-            if loss > 0.0:
-                 # 可以在日志里看，但别发出来吵人
-                 logger.debug(f"[Brain] Learned from input. Loss: {loss:.4f}")
+            try:
+                log_msg = await self.brain.learn_dual_coding(text)
+            except Exception as e:
+                logger.error(f"[Brain] Learning error: {e}")
 
-        # === 2. 逻辑刻印 (Teaching) ===
-        # 简单句式: "A是B", "A有B"
-        if "是" in text and len(text) < 10:
-            parts = text.split("是")
-            if len(parts) == 2:
-                A, B = parts[0].strip(), parts[1].strip()
-                if A and B:
-                    # CHANNEL 0: IS_A
-                    cnt = self.brain.learn_logical([(A, 0, B)])
-                    if cnt > 0:
-                        logger.info(f"[Brain] Logic Imprinted: {A} IS {B}")
-
-        # === 3. 主动回复 (Replying) ===
-        # 只有被 @ 或者提到关键词才回复 (防止插嘴)
-        # 这里假设机器人名字叫 "夏娃" 或 "Eve"
+        # === 2. 主动回复 ===
         trigger_words = ["夏娃", "Eve", "eve"]
-        is_at = False # 暂时拿不到 at 信息，简化处理
-        
         should_reply = any(w in text for w in trigger_words)
 
         if should_reply:
-            reply_text, indices = self.brain.reply(text)
+            # 使用 await 调用 reply
+            reply_text, indices = await self.brain.reply(text)
             if reply_text:
-                self.last_reply_indices[user_id] = indices # 记住这次回复，等待反馈
+                self.last_reply_indices[user_id] = indices 
                 yield event.plain_result(f"{reply_text}")
     
     @filter.command("夏娃好棒")
     async def good_girl(self, event: AstrMessageEvent):
-        """
-        [RL] 正向反馈
-        """
         user_id = event.get_sender_id()
         indices = self.last_reply_indices.get(user_id)
         if indices:
@@ -87,9 +78,6 @@ class CognitiveBrainPlugin(Star):
 
     @filter.command("夏娃闭嘴")
     async def bad_girl(self, event: AstrMessageEvent):
-        """
-        [RL] 负向反馈
-        """
         user_id = event.get_sender_id()
         indices = self.last_reply_indices.get(user_id)
         if indices:
@@ -100,9 +88,6 @@ class CognitiveBrainPlugin(Star):
 
     @filter.command("夏娃睡觉")
     async def sleep_now(self, event: AstrMessageEvent):
-        """
-        强制触发睡眠整理
-        """
         if not self.brain: return
         yield event.plain_result("💤 正在整理记忆突触... (请勿打扰)")
         try:
@@ -110,9 +95,37 @@ class CognitiveBrainPlugin(Star):
             msg = f"✨ 睡醒啦！精神百倍！\n本次睡眠清理了 {pruned} 个微弱连接 (占比 {ratio:.1f}%)。"
             if decay < 1.0:
                 msg += f"\n⚠️ 大脑压力过大，已启动强制遗忘 (衰减系数: {decay:.2f})"
-            else:
-                msg += "\n🧠 大脑容量充足，无需强制遗忘。"
             yield event.plain_result(msg)
         except Exception as e:
             logger.error(f"Sleep failed: {e}")
             yield event.plain_result("😫 睡不着... (睡眠程序出错)")
+
+    @filter.command("夏娃状态")
+    async def brain_status(self, event: AstrMessageEvent):
+        """查看大脑当前状态"""
+        if not self.brain:
+            yield event.plain_result("🧠 大脑未连接！")
+            return
+        
+        vocab_size = self.brain.next_idx
+        device = str(self.brain.device)
+        
+        # Logic Info
+        logic_enabled = self.brain.logic_engine.enable
+        logic_temp = self.brain.logic_engine.temperature
+        
+        # Expr Info
+        expr_enabled = self.brain.expression_engine.enable
+        expr_temp = self.brain.expression_engine.temperature
+
+        msg = (
+            f"🧠 [夏娃系统状态]\n"
+            f"---------------------------\n"
+            f"📚 词汇量: {vocab_size} / {self.brain.vocab_limit}\n"
+            f"⚙️ 运行设备: {device}\n"
+            f"🔍 逻辑前额叶: {'✅' if logic_enabled else '❌'} (Temp: {logic_temp})\n"
+            f"🗣️ 表达中枢: {'✅' if expr_enabled else '❌'} (Temp: {expr_temp})\n"
+            f"---------------------------\n"
+            f"💡 全脑协同工作中..."
+        )
+        yield event.plain_result(msg)
