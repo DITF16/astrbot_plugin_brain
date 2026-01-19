@@ -196,7 +196,8 @@ class BrainInterface:
     def _clean_text(self, text):
         if not text: return ""
         text_no_cq = re.sub(r'\[CQ:[^\]]+\]', '', text)
-        cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9]', '', text_no_cq)
+        # 保留空格用于英文分词
+        cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z\s]', '', text_no_cq)
         return cleaned
 
     def _get_or_add_word(self, word):
@@ -216,7 +217,8 @@ class BrainInterface:
         words = list(jieba.cut(clean_text))
         indices = []
         for w in words:
-            if w.strip() == "": continue
+            w = w.strip()  # 去掉空格
+            if w == "": continue
             idx = self._get_or_add_word(w)
             indices.append(idx)
         return indices

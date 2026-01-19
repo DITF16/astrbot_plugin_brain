@@ -294,6 +294,14 @@ class CognitiveBrainPlugin(Star):
         else:
             return str(user_id) in self.whitelist_users
 
+    def extract_text(self, message_chain: list) -> str:
+        """从消息链中提取纯文本"""
+        texts = []
+        for component in message_chain:
+            if hasattr(component, 'type') and component.type.value == 'Plain':
+                texts.append(component.text)
+        return ''.join(texts)
+
     # ============================================================
     # 📚 学习模块
     # ============================================================
@@ -303,7 +311,9 @@ class CognitiveBrainPlugin(Star):
         if not self._is_allowed(event):
             return
 
-        text = event.message_str
+        message_chain = event.get_messages()
+        text = self.extract_text(message_chain)
+        # logger.info("text = " + text)
 
         if text.startswith("/") or len(text) <= 1:
             return
