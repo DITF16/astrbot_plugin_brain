@@ -12,14 +12,9 @@ BRAIN_PATH = DATA_DIR / "my_brain.pth"
 
 class CognitiveBrainPlugin(Star):
     """
-    [V3.5] 双重编码大脑 + 表达中枢 + 白名单 + LLM拦截
-    特性:
-    1. Dual Coding (LLM Logic + Hebbian Intuition)
-    2. Reinforcement Learning
-    3. Sleep Consolidation
-    4. Expression Center (Broca's Area)
-    5. Whitelist Support (Group & Private)
-    6. LLM Request Interception
+    夏娃模型学习及回复
+    - 学习：监听白名单内所有消息（被动学习）
+    - 回复：仅在 LLM 请求时拦截（主动回复）
     """
 
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -49,9 +44,7 @@ class CognitiveBrainPlugin(Star):
             logger.info(f"[Brain] 私聊白名单: {self.whitelist_users}")
 
     def _is_allowed(self, event: AstrMessageEvent) -> bool:
-        """
-        检查消息来源是否在白名单中。
-        """
+        """检查消息来源是否在白名单中"""
         if not self.whitelist_enabled:
             return True
 
@@ -63,58 +56,72 @@ class CognitiveBrainPlugin(Star):
         else:
             return str(user_id) in self.whitelist_users
 
-    @filter.on_llm_request()
-    async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
+    # ============================================================
+    # 📚 学习模块：监听所有消息（被动学习）
+    # ============================================================
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def on_message_learn(self, event: AstrMessageEvent):
         """
-        拦截 LLM 请求，使用自己的大脑逻辑进行回复。
-
-        触发时机: 当用户消息即将发送给 LLM 时
-        返回值:
-            - EventResult.STOP: 阻止后续处理（包括 LLM 调用）
-            - 不返回或返回 None: 继续正常 LLM 流程
+        监听白名单内的所有消息，用于学习。
+        不产生任何回复，只是默默学习。
         """
         # === 白名单检查 ===
         if not self._is_allowed(event):
-            return  # 不在白名单中，继续正常 LLM 流程
+            return
+
+        text = event.message_str
+
+        # 过滤指令和过短消息
+        if text.startswith("/") or len(text) <= 1:
+            return
+
+        # === 双重编码学习 ===
+        try:
+            log_msg = await self.brain.learn_dual_coding(text)
+            logger.info(f"[夏娃模型] 学习: {text[:20]}... -> {log_msg}")
+        except Exception as e:
+            logger.error(f"[夏娃模型] Learning error: {e}")
+
+        # 不 yield 任何内容，不产生回复
+        return
+
+    # ============================================================
+    # 💬 回复模块：拦截 LLM 请求（主动回复）
+    # ============================================================
+    @filter.on_llm_request()
+    async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest):
+        """
+        拦截 LLM 请求，使用大脑生成回复。
+        此时消息已经在 on_message_learn 中学习过了。
+        """
+        # === 白名单检查 ===
+        if not self._is_allowed(event):
+            return  # 继续正常 LLM 流程
 
         text = event.message_str
         user_id = event.get_sender_id()
 
-        # === 1. 双重编码学习 ===
-        if not text.startswith("/") and len(text) > 1:
-            try:
-                log_msg = await self.brain.learn_dual_coding(text)
-                logger.debug(f"[Brain] {log_msg}")
-            except Exception as e:
-                logger.error(f"[Brain] Learning error: {e}")
-
-        # === 2. 使用大脑生成回复 ===
+        # === 使用大脑生成回复 ===
         try:
             reply_text, indices = await self.brain.reply(text)
 
             if reply_text:
-                # 保存索引用于强化学习
                 self.last_reply_indices[user_id] = indices
-
-                # 发送回复
-                event.set_result(event.plain_result(reply_text))
-                # 阻止后续 LLM 调用，由本插件接管回复
+                yield event.plain_result(reply_text)
                 event.stop_event()
-
-                return
             else:
-                # 大脑无法生成回复，继续正常 LLM 流程
-                logger.debug("[Brain] No reply generated, fallback to LLM")
-                return
+                logger.info("[夏娃模型] 无法生成回复，交给 LLM 处理")
+                return  # 继续 LLM 流程
 
         except Exception as e:
-            logger.error(f"[Brain] Reply error: {e}")
-            # 出错时继续正常 LLM 流程
+            logger.error(f"[夏娃模型] Reply error: {e}")
             return
 
+    # ============================================================
+    # 🎮 指令模块
+    # ============================================================
     @filter.command("夏娃好棒")
     async def good_girl(self, event: AstrMessageEvent):
-        # === 白名单检查 ===
         if not self._is_allowed(event):
             return
 
@@ -128,7 +135,6 @@ class CognitiveBrainPlugin(Star):
 
     @filter.command("夏娃闭嘴")
     async def bad_girl(self, event: AstrMessageEvent):
-        # === 白名单检查 ===
         if not self._is_allowed(event):
             return
 
@@ -142,7 +148,6 @@ class CognitiveBrainPlugin(Star):
 
     @filter.command("夏娃睡觉")
     async def sleep_now(self, event: AstrMessageEvent):
-        # === 白名单检查 ===
         if not self._is_allowed(event):
             return
 
@@ -161,8 +166,6 @@ class CognitiveBrainPlugin(Star):
 
     @filter.command("夏娃状态")
     async def brain_status(self, event: AstrMessageEvent):
-        """查看大脑当前状态"""
-        # === 白名单检查 ===
         if not self._is_allowed(event):
             return
 
