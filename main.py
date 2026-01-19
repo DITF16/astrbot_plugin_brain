@@ -19,29 +19,31 @@ class SleepScheduler:
     """
 
     def __init__(self, config: dict):
+        # 获取 sleep 子配置（嵌套结构）
         sleep_config = config.get("sleep", {})
 
         # === 定时睡眠配置 (昼夜节律) ===
         self.scheduled_enabled = sleep_config.get("scheduled_enabled", True)
-        self.scheduled_hour = sleep_config.get("scheduled_hour", 3)  # 凌晨3点
+        self.scheduled_hour = sleep_config.get("scheduled_hour", 3)
         self.scheduled_minute = sleep_config.get("scheduled_minute", 0)
 
         # === 疲劳度睡眠配置 ===
         self.fatigue_enabled = sleep_config.get("fatigue_enabled", True)
-        self.fatigue_threshold = sleep_config.get("fatigue_threshold", 500)  # 学习500条后小睡
+        self.fatigue_threshold = sleep_config.get("fatigue_threshold", 500)
         self.fatigue_counter = 0
 
         # === 空闲睡眠配置 ===
         self.idle_enabled = sleep_config.get("idle_enabled", True)
-        self.idle_timeout = sleep_config.get("idle_timeout", 3600)  # 1小时无活动
+        self.idle_timeout = sleep_config.get("idle_timeout", 3600)
         self.last_activity_time = datetime.now()
 
         # === 压力睡眠配置 ===
         self.pressure_enabled = sleep_config.get("pressure_enabled", True)
         self.pressure_check_interval = sleep_config.get("pressure_check_interval", 600)  # 10分钟检查一次
+        self.pressure_threshold = sleep_config.get("pressure_threshold", 0.8)  # 80%触发
 
         # === 睡眠冷却 ===
-        self.min_sleep_interval = sleep_config.get("min_sleep_interval", 1800)  # 最少间隔30分钟
+        self.min_sleep_interval = sleep_config.get("min_sleep_interval", 1800)
         self.last_sleep_time = None
 
         # === 状态追踪 ===
@@ -179,11 +181,10 @@ class CognitiveBrainPlugin(Star):
                 logger.error(f"[夏娃模型] 自动保存失败: {e}")
 
     async def _sleep_monitor_loop(self):
-        """
-        睡眠监控循环 - 检查各种睡眠触发条件
-        """
-        # 等待一段时间再开始监控，避免启动时立即睡眠
+        """睡眠监控循环"""
         await asyncio.sleep(60)
+
+        last_pressure_check = datetime.now()
 
         while not self._stop_flag:
             try:
@@ -191,14 +192,13 @@ class CognitiveBrainPlugin(Star):
                 if self._stop_flag:
                     break
 
-                # 检查是否可以睡眠
                 if not self.sleep_scheduler.can_sleep():
                     continue
 
                 sleep_reason = None
                 sleep_type = None
 
-                # 1️⃣ 定时睡眠（最高优先级）
+                # 1️⃣ 定时睡眠
                 if self.sleep_scheduler.check_scheduled_sleep():
                     sleep_reason = "昼夜节律"
                     sleep_type = "deep"
@@ -213,19 +213,20 @@ class CognitiveBrainPlugin(Star):
                     sleep_reason = "空闲休眠"
                     sleep_type = "light"
 
-                # 4️⃣ 压力睡眠（检查突触密度）
+                # 4️⃣ 压力睡眠（按配置间隔检查）
                 elif self.sleep_scheduler.pressure_enabled:
-                    pressure = self._check_brain_pressure()
-                    if pressure > 0.8:  # 突触密度超过80%
-                        sleep_reason = f"大脑压力过载 ({pressure:.0%})"
-                        sleep_type = "emergency"
+                    elapsed = (datetime.now() - last_pressure_check).total_seconds()
+                    if elapsed >= self.sleep_scheduler.pressure_check_interval:
+                        last_pressure_check = datetime.now()
+                        pressure = self._check_brain_pressure()
+                        if pressure > self.sleep_scheduler.pressure_threshold:
+                            sleep_reason = f"大脑压力过载 ({pressure:.0%})"
+                            sleep_type = "emergency"
 
-                # 触发睡眠
                 if sleep_reason:
                     await self._auto_sleep(sleep_reason, sleep_type)
 
             except asyncio.CancelledError:
-                logger.info("[夏娃模型] 睡眠监控任务被取消")
                 break
             except Exception as e:
                 logger.error(f"[夏娃模型] 睡眠监控异常: {e}")
