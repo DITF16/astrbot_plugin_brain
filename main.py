@@ -1,3 +1,4 @@
+from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.star import StarTools
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
@@ -107,7 +108,7 @@ class CognitiveBrainPlugin(Star):
 
             if reply_text:
                 self.last_reply_indices[user_id] = indices
-                yield event.plain_result(reply_text)
+                await event.send(MessageChain().message(reply_text))
                 event.stop_event()
             else:
                 logger.info("[夏娃模型] 无法生成回复，交给 LLM 处理")
