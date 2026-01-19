@@ -126,5 +126,52 @@
         "default": 300
       }
     }
+  },
+  "sleep": {
+    "scheduled_enabled": {
+      "description": "启用定时睡眠（昼夜节律）",
+      "type": "bool",
+      "default": true
+    },
+    "scheduled_hour": {
+      "description": "定时睡眠时间（小时，24小时制）",
+      "type": "int",
+      "default": 3
+    },
+    "scheduled_minute": {
+      "description": "定时睡眠时间（分钟）",
+      "type": "int",
+      "default": 0
+    },
+    "fatigue_enabled": {
+      "description": "启用疲劳睡眠",
+      "type": "bool",
+      "default": true
+    },
+    "fatigue_threshold": {
+      "description": "疲劳阈值（学习多少条消息后触发小睡）",
+      "type": "int",
+      "default": 500
+    },
+    "idle_enabled": {
+      "description": "启用空闲睡眠",
+      "type": "bool",
+      "default": true
+    },
+    "idle_timeout": {
+      "description": "空闲超时时间（秒）",
+      "type": "int",
+      "default": 3600
+    },
+    "pressure_enabled": {
+      "description": "启用压力睡眠（突触过载时）",
+      "type": "bool",
+      "default": true
+    },
+    "min_sleep_interval": {
+      "description": "最小睡眠间隔（秒），避免频繁睡眠",
+      "type": "int",
+      "default": 1800
+    }
   }
 }
