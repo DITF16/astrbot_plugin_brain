@@ -1,4 +1,29 @@
 {
+  "whitelist": {
+    "type": "object",
+    "description": "白名单设置",
+    "hint": "只有在白名单中的群聊/私聊才会触发学习和回复",
+    "items": {
+      "enable": {
+        "type": "bool",
+        "description": "启用白名单",
+        "hint": "关闭后将对所有群聊/私聊生效",
+        "default": false
+      },
+      "groups": {
+        "type": "list",
+        "description": "群聊白名单",
+        "hint": "填写群号，如 [\"123456789\", \"987654321\"]",
+        "default": []
+      },
+      "users": {
+        "type": "list",
+        "description": "私聊白名单",
+        "hint": "填写用户ID，如 [\"10001\", \"10002\"]",
+        "default": []
+      }
+    }
+  },
   "llm": {
     "type": "object",
     "description": "逻辑判别器 (Logic Discriminator)",
