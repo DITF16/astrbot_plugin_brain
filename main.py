@@ -1,3 +1,4 @@
+import asyncio
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.star import StarTools
 from astrbot.api.event import filter, AstrMessageEvent
@@ -39,10 +40,33 @@ class CognitiveBrainPlugin(Star):
         self.whitelist_groups = set(str(g) for g in whitelist_config.get("groups", []))
         self.whitelist_users = set(str(u) for u in whitelist_config.get("users", []))
 
-        logger.info(f"[Brain] 白名单状态: {'启用' if self.whitelist_enabled else '禁用'}")
+        logger.info(f"[夏娃模型] 白名单状态: {'启用' if self.whitelist_enabled else '禁用'}")
         if self.whitelist_enabled:
-            logger.info(f"[Brain] 群聊白名单: {self.whitelist_groups}")
-            logger.info(f"[Brain] 私聊白名单: {self.whitelist_users}")
+            logger.info(f"[夏娃模型] 群聊白名单: {self.whitelist_groups}")
+            logger.info(f"[夏娃模型] 私聊白名单: {self.whitelist_users}")
+
+        # 保存任务引用 + 停止标志
+        self._auto_save_task: asyncio.Task | None = None
+        self._stop_flag = False
+
+        # 启动自动保存任务
+        self.auto_save_interval = config.get("brain", {}).get("save_interval", 300)
+        self._auto_save_task = asyncio.create_task(self._auto_save_loop())
+
+    async def _auto_save_loop(self):
+        """每隔一段时间自动保存大脑"""
+        while not self._stop_flag:
+            try:
+                await asyncio.sleep(self.auto_save_interval)
+                if self._stop_flag:  # 睡醒后再检查一次
+                    break
+                self.brain.save_brain()
+                logger.info("[夏娃模型] 自动保存完成")
+            except asyncio.CancelledError:
+                logger.info("[夏娃模型] 自动保存任务被取消")
+                break
+            except Exception as e:
+                logger.error(f"[夏娃模型] 自动保存失败: {e}")
 
     def _is_allowed(self, event: AstrMessageEvent) -> bool:
         """检查消息来源是否在白名单中"""
@@ -199,3 +223,22 @@ class CognitiveBrainPlugin(Star):
             f"💡 全脑协同工作中..."
         )
         yield event.plain_result(msg)
+
+    async def terminate(self):
+        """插件关闭时的清理工作"""
+        logger.info("[夏娃模型] 系统关闭，保存记忆中...")
+
+        # 1. 设置停止标志
+        self._stop_flag = True
+
+        # 2. 取消任务
+        if self._auto_save_task and not self._auto_save_task.done():
+            self._auto_save_task.cancel()
+            try:
+                await self._auto_save_task  # 等待任务真正结束
+            except asyncio.CancelledError:
+                pass  # 预期的取消异常，忽略
+
+        # 3. 最终保存
+        self.brain.save_brain()
+        logger.info("[夏娃模型] 记忆保存完毕，再见~")
