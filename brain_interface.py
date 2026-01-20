@@ -53,7 +53,8 @@ class LogicDiscriminator:
                 {"role": "user", "content": text}
             ],
             "temperature": self.temperature,
-            "response_format": {"type": "json_object"} 
+            "response_format": {"type": "json_object"},
+            "enable_thinking": False  # 添加: 禁用思考模式 (兼容 Qwen3/DeepSeek)
         }
 
         try:
@@ -75,7 +76,8 @@ class LogicDiscriminator:
                         return {"type": "intuition"}
 
         except Exception as e:
-            logger.warning(f"[Brain] Logic Discriminator Failed: {e}")
+            error_msg = str(e) if str(e) else type(e).__name__  # 修改: 显示异常类型
+            logger.warning(f"[Brain] Logic Discriminator Failed: {error_msg}")
             return {"type": "intuition"}
 
 
@@ -119,6 +121,7 @@ class ExpressionCenter:
                 {"role": "user", "content": prompt}
             ],
             "temperature": self.temperature,
+            "enable_thinking": False  # 添加: 禁用思考模式 (兼容 Qwen3)
         }
 
         try:
@@ -133,8 +136,9 @@ class ExpressionCenter:
                     return content.strip()
 
         except Exception as e:
-            logger.warning(f"[Brain] Expression Center Failed: {e}")
-            return "".join(keywords) # Fallback
+            error_msg = str(e) if str(e) else type(e).__name__
+            logger.warning(f"[Brain] Expression Center Failed: {error_msg}")
+            return "".join(keywords)
 
 
 class BrainInterface:
