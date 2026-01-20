@@ -136,7 +136,7 @@ class CognitiveGraphModel(nn.Module):
 
         if channel_weights is None:
             channel_weights = torch.tensor([0.3, 0.2, 0.3, 0.2, 0.0], device=device)
-        
+
         channel_weights = channel_weights / channel_weights.sum()
         mixed_synapse = torch.einsum('c,cij->ij', channel_weights, self.synapse_tensor)
         attn_weights = self.get_attention_weights(input_indices)
@@ -148,13 +148,38 @@ class CognitiveGraphModel(nn.Module):
 
         for _ in range(steps):
             current_thought = torch.matmul(current_thought, mixed_synapse)
-            current_thought = torch.relu(current_thought - 0.1) 
+            current_thought = torch.relu(current_thought - 0.1)
             current_thought += self.mood_bias * 0.05
 
+        # === 新增：自动学习相邻词的连接 ===
         if self.training:
             self.learn_from_input(input_indices)
+            self._learn_associations(input_indices)  # 新增！
 
         return current_thought
+
+    def _learn_associations(self, input_indices, learning_rate=0.1):
+        """
+        自动学习：相邻的词建立关联连接
+        """
+        with torch.no_grad():
+            for batch in input_indices:
+                indices = batch.tolist()
+                for i in range(len(indices) - 1):
+                    u, v = indices[i], indices[i + 1]
+
+                    # 跳过特殊token (PAD=0, UNK=1 等)
+                    if u <= 1 or v <= 1:
+                        continue
+
+                    # 双向增强关联通道
+                    current_weight = self.synapse_tensor[CHANNEL_ASSOCIATED, u, v].item()
+
+                    # 使用递减学习率：已有强连接时学得慢，弱连接学得快
+                    effective_lr = learning_rate / (1.0 + abs(current_weight))
+
+                    self.synapse_tensor.data[CHANNEL_ASSOCIATED, u, v] += effective_lr
+                    self.synapse_tensor.data[CHANNEL_ASSOCIATED, v, u] += effective_lr * 0.5  # 反向弱一点
 
     def generate_reply(self, input_indices, max_len=20, channel_weights=None):
         self.eval()
