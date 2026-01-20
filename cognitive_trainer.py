@@ -111,15 +111,21 @@ class HebbianTrainer:
 
     def _normalize_synapse(self, W):
         """
-        突触竞争归一化 (Synaptic Normalization)
-        资源限制：一个概念发射出的总能量是有限的。
+        突触软限制 - 只压制过强的连接，不破坏弱连接
         """
-        # A. 钳位
-        W.data = torch.clamp(W.data, max=10.0)
-        
-        # B. 归一化 (Row Normalization)
-        row_sums = W.data.sum(dim=1, keepdim=True) + 1e-6
-        W.data = W.data / row_sums
-        
-        # C. 能量回升
-        W.data *= 5.0
+        with torch.no_grad():
+            # 只钳位最大值，不做全局归一化
+            W.data.clamp_(-10.0, 10.0)
+
+            # 可选：对每行能量过大的进行软缩放
+            row_sums = W.data.abs().sum(dim=1, keepdim=True)
+            max_energy = 50.0  # 每行最大允许能量
+
+            # 只缩放超标的行
+            scale = torch.where(
+                row_sums > max_energy,
+                max_energy / row_sums,
+                torch.ones_like(row_sums)
+            )
+            W.data.mul_(scale)
+
