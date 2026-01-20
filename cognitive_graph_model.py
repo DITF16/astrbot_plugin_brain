@@ -60,21 +60,21 @@ class CognitiveGraphModel(nn.Module):
                 else:
                     self.mood_bias[v] -= 0.1
 
-    def process_sleep_cycle(self, pruning_threshold=0.01):  # 从0.05降到0.01
+    def process_sleep_cycle(self, pruning_threshold=0.005):
         """
-        [V3.3] 睡眠机制：修复过度清理
+        睡眠机制：修复过度清理
         """
         with torch.no_grad():
             total_pruned = 0
             total_count = 0
 
             # === 1. 压力检测 ===
-            target_capacity = float(self.vocab_size) * 20.0  # 从10提高到20
+            target_capacity = float(self.vocab_size) * 50.0
             current_energy = self.synapse_tensor.abs().sum().item()
 
             if current_energy > target_capacity:
                 pressure_ratio = target_capacity / current_energy
-                global_decay = max(pressure_ratio, 0.9)  # 从0.8提高到0.9
+                global_decay = max(pressure_ratio, 0.95)
             else:
                 global_decay = 1.0
 
@@ -85,7 +85,7 @@ class CognitiveGraphModel(nn.Module):
 
                 # --- 晶体化保护 (降低保护阈值) ---
                 weights_abs = channel_data.abs()
-                shield = torch.sigmoid((weights_abs - 0.2) * 8.0)  # 从0.5降到0.2
+                shield = torch.sigmoid((weights_abs - 0.2) * 8.0)
                 final_decay_c = global_decay * (1.0 - shield) + shield
                 channel_data.mul_(final_decay_c)
                 del weights_abs, shield, final_decay_c
@@ -104,7 +104,7 @@ class CognitiveGraphModel(nn.Module):
                 gate = torch.tanh(sparsity * 5.0)
 
                 counts = self.word_counts
-                base_limit = 30.0  # 从10提高到30
+                base_limit = 30.0
                 freq_bonus = torch.log1p(counts).view(-1, 1).to(channel_data.device) * 3.0
 
                 dynamic_limits = base_limit + freq_bonus * gate
@@ -119,7 +119,7 @@ class CognitiveGraphModel(nn.Module):
                 channel_data.masked_fill_(mask, 0.0)
                 del mask
 
-            self.mood_bias.mul_(0.95)  # 从0.9改为0.95
+            self.mood_bias.mul_(0.95)
 
             if self.synapse_tensor.is_cuda:
                 torch.cuda.empty_cache()
