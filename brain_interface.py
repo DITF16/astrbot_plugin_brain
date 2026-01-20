@@ -1,3 +1,5 @@
+from typing import Dict
+
 import torch
 import os
 import jieba
@@ -9,6 +11,7 @@ from .cognitive_graph_model import CognitiveGraphModel
 from .cognitive_trainer import HebbianTrainer
 from astrbot.api import logger
 from .working_memory import WorkingMemory, EpisodicBuffer
+from .causal_reasoning import CausalReasoningEngine, ReasoningType, ReasoningResult
 
 # 逻辑关系映射
 RELATION_MAP = {
@@ -171,6 +174,13 @@ class BrainInterface:
         )
         self.episodic_buffer = EpisodicBuffer(max_turns=10)
 
+        # 6. 因果推理引擎
+        self.reasoning_engine = CausalReasoningEngine(
+            model=self.model,
+            idx2word=self.idx2word,
+            word2idx=self.word2idx
+        )
+
     def load_brain(self):
         if os.path.exists(self.model_path):
             try:
@@ -323,3 +333,164 @@ class BrainInterface:
     def reinforce(self, indices, reward_sign):
         if not indices: return
         self.model.reinforce(indices, reward_sign)
+
+    def reason(self, text: str, conversation_id: str = None) -> ReasoningResult:
+        """
+        [因果推理入口]
+        分析问题类型并执行相应推理
+
+        Args:
+            text: 用户输入
+            conversation_id: 对话ID
+
+        Returns:
+            ReasoningResult
+        """
+        # 绑定上下文
+        if conversation_id:
+            self.working_memory.bind_context(conversation_id)
+
+        # 编码输入
+        indices = self._encode(text)
+        if not indices:
+            return ReasoningResult(
+                success=False,
+                reasoning_type=ReasoningType.NONE,
+                query_concept="",
+                explanation="无法理解您的问题"
+            )
+
+        # 获取工作记忆上下文
+        context_indices = self.working_memory.get_context_indices()
+        combined_indices = list(dict.fromkeys(indices + context_indices))
+
+        # 将输入加入工作记忆
+        words = [self.idx2word.get(idx, "") for idx in indices]
+        self.working_memory.attend_batch(indices, words)
+
+        # 执行推理
+        result = self.reasoning_engine.reason(
+            query_indices=combined_indices,
+            query_text=text
+        )
+
+        # 如果推理成功，将推理路径上的概念也加入工作记忆
+        if result.success and result.primary_path:
+            for word in result.primary_path.get_words():
+                if word in self.word2idx:
+                    idx = self.word2idx[word]
+                    self.working_memory.attend(idx, word, activation=0.7, source="reasoning")
+
+        return result
+
+    def answer_why(self, concept: str) -> ReasoningResult:
+        """
+        回答"为什么"类问题
+
+        Args:
+            concept: 要解释的概念
+
+        Returns:
+            ReasoningResult
+        """
+        if concept not in self.word2idx:
+            return ReasoningResult(
+                success=False,
+                reasoning_type=ReasoningType.WHY,
+                query_concept=concept,
+                explanation=f"我不认识 '{concept}' 这个概念"
+            )
+
+        idx = self.word2idx[concept]
+        return self.reasoning_engine.reason(
+            query_indices=[idx],
+            query_text=f"为什么{concept}",
+            reasoning_type=ReasoningType.WHY
+        )
+
+    def predict_effect(self, action: str) -> ReasoningResult:
+        """
+        预测行为的后果
+
+        Args:
+            action: 行为/条件
+
+        Returns:
+            ReasoningResult
+        """
+        if action not in self.word2idx:
+            return ReasoningResult(
+                success=False,
+                reasoning_type=ReasoningType.PREDICT,
+                query_concept=action,
+                explanation=f"我不认识 '{action}' 这个概念"
+            )
+
+        idx = self.word2idx[action]
+        return self.reasoning_engine.reason(
+            query_indices=[idx],
+            query_text=f"如果{action}",
+            reasoning_type=ReasoningType.WHAT_IF
+        )
+
+    def find_solution(self, goal: str) -> ReasoningResult:
+        """
+        找到达成目标的方法
+
+        Args:
+            goal: 目标
+
+        Returns:
+            ReasoningResult
+        """
+        if goal not in self.word2idx:
+            return ReasoningResult(
+                success=False,
+                reasoning_type=ReasoningType.HOW,
+                query_concept=goal,
+                explanation=f"我不认识 '{goal}' 这个概念"
+            )
+
+        idx = self.word2idx[goal]
+        return self.reasoning_engine.reason(
+            query_indices=[idx],
+            query_text=f"如何{goal}",
+            reasoning_type=ReasoningType.HOW
+        )
+
+    def get_causal_stats(self) -> Dict:
+        """获取因果图统计"""
+        return self.reasoning_engine.get_causal_stats()
+
+    async def reply_with_reasoning(self, text: str, conversation_id: str = None):
+        """
+        [增强版回复] — 结合因果推理
+
+        1. 先尝试因果推理
+        2. 如果成功，使用推理结果
+        3. 否则回退到原有联想模式
+        """
+        # 绑定上下文
+        if conversation_id:
+            self.working_memory.bind_context(conversation_id)
+
+        # 尝试因果推理
+        reasoning_result = self.reason(text, conversation_id)
+
+        # 如果推理成功且置信度足够
+        if reasoning_result.success and reasoning_result.confidence > 0.3:
+            # 使用推理的关键词
+            keywords = reasoning_result.keywords
+
+            # 如果有解释，可以直接使用
+            if reasoning_result.explanation:
+                # 让表达中枢润色
+                final_reply = await self.expression_engine.articulate(
+                    text,
+                    keywords + [reasoning_result.explanation]
+                )
+                return final_reply, reasoning_result
+
+        # 回退到原有模式
+        reply_text, indices = await self.reply(text, conversation_id)
+        return reply_text, None
