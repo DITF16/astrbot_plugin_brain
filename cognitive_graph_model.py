@@ -62,79 +62,73 @@ class CognitiveGraphModel(nn.Module):
 
     def process_sleep_cycle(self, pruning_threshold=0.05):
         """
-        [V3.1] 睡眠机制：压力驱动 + 晶体化保护 + 专注度门控预算 + 对比度增强
+        [V3.2] 睡眠机制：内存优化版本 - 分通道处理
         """
         with torch.no_grad():
-            # === 1. 压力检测 (Capacity Pressure) ===
+            total_pruned = 0
+            total_count = 0
+
+            # === 1. 压力检测 (只计算标量，不创建大张量) ===
             target_capacity = float(self.vocab_size) * 10.0
-            current_energy = self.synapse_tensor.abs().sum()
-            
+            current_energy = self.synapse_tensor.abs().sum().item()  # 转为 Python 标量
+
             if current_energy > target_capacity:
                 pressure_ratio = target_capacity / current_energy
-                global_decay = max(pressure_ratio, 0.8) 
+                global_decay = max(pressure_ratio, 0.8)
             else:
                 global_decay = 1.0
-            
-            # === 2. 晶体化保护 (Crystallization) ===
-            weights_abs = self.synapse_tensor.abs()
-            shield = torch.sigmoid((weights_abs - 0.5) * 5.0)
-            final_decay = global_decay * (1.0 - shield) + 1.0 * shield
-            self.synapse_tensor *= final_decay
 
-            # === 3. 对比度增强 (Contrast Enhancement) ===
-            self.synapse_tensor = torch.sign(self.synapse_tensor) * torch.pow(self.synapse_tensor.abs(), 1.1)
-            
-            # === 4. 动态能量守恒 (带专注度门控) ===
-            # [修正] 防止"了"、"，"等高频停用词获得过高预算。
-            
-            # 1. 计算行能量 (Sum)
-            row_sums = self.synapse_tensor.abs().sum(dim=2, keepdim=True) + 1e-6
-            
-            # 2. 计算行峰值 (Max)
-            # dim=2 是目标节点维度。max[0] 返回 values
-            row_maxs = self.synapse_tensor.abs().max(dim=2, keepdim=True)[0]
-            
-            # 3. 计算稀疏度 (Sparsity = Max / Sum)
-            # 停用词(扁平分布): Sparsity -> 1/N (很小)
-            # 核心词(尖峰分布): Sparsity -> 0.5~1.0 (很大)
-            sparsity = row_maxs / row_sums
-            
-            # 4. 计算门控系数 (Gate)
-            # 使用 Tanh 放大差异。 Sparsity=0.1 -> Gate=0.46; Sparsity=0.01 -> Gate=0.05
-            gate = torch.tanh(sparsity * 5.0) 
-            
-            # 5. 计算动态预算
-            counts = self.word_counts
-            base_limit = 10.0
-            freq_bonus = torch.log1p(counts) * 2.0
-            
-            # 核心修正：红利必须乘以门控系数！
-            # 注意维度广播: freq_bonus [Vocab] -> [1, Vocab, 1]
-            # gate [Channels, Vocab, 1] (其实我们希望针对 Source Node，所以用 Channel 平均一下或者保留 Channel 差异)
-            # 这里 Sparsity 是针对每个 Channel 计算的，这很好，不同通道的处理方式不同
-            
-            gate_expanded = gate # [C, N, 1]
-            bonus_expanded = freq_bonus.view(1, -1, 1).to(self.synapse_tensor.device) # [1, N, 1]
-            
-            dynamic_limits = base_limit + bonus_expanded * gate_expanded
-            
-            # 6. 应用归一化
-            scaling_factor = dynamic_limits / row_sums
-            scaling_factor = torch.clamp(scaling_factor, max=1.0)
-            self.synapse_tensor *= scaling_factor
-            
-            # === 5. 死亡剪枝 (Pruning) ===
-            mask = torch.abs(self.synapse_tensor) < pruning_threshold
-            
-            pruned_count = mask.sum().item()
-            total_count = self.synapse_tensor.numel()
-            
-            self.synapse_tensor.masked_fill_(mask, 0.0)
-            
+            # === 2-5: 分通道处理，大幅减少内存峰值 ===
+            num_channels = self.synapse_tensor.shape[0]
+
+            for c in range(num_channels):
+                # 获取单通道视图 [vocab_size, vocab_size] ≈ 400MB
+                channel_data = self.synapse_tensor.data[c]
+
+                # --- 晶体化保护 (in-place) ---
+                weights_abs = channel_data.abs()
+                shield = torch.sigmoid((weights_abs - 0.5) * 5.0)
+                final_decay_c = global_decay * (1.0 - shield) + shield
+                channel_data.mul_(final_decay_c)
+                del weights_abs, shield, final_decay_c  # 立即释放
+
+                # --- 对比度增强 (in-place) ---
+                signs = torch.sign(channel_data)
+                channel_data.abs_()  # in-place abs
+                channel_data.pow_(1.1)  # in-place pow
+                channel_data.mul_(signs)  # in-place 恢复符号
+                del signs
+
+                # --- 动态能量守恒 ---
+                row_sums = channel_data.abs().sum(dim=1, keepdim=True) + 1e-6
+                row_maxs = channel_data.abs().max(dim=1, keepdim=True)[0]
+                sparsity = row_maxs / row_sums
+                gate = torch.tanh(sparsity * 5.0)
+
+                counts = self.word_counts
+                base_limit = 10.0
+                freq_bonus = torch.log1p(counts).view(-1, 1).to(channel_data.device) * 2.0
+
+                dynamic_limits = base_limit + freq_bonus * gate
+                scaling_factor = (dynamic_limits / row_sums).clamp(max=1.0)
+                channel_data.mul_(scaling_factor)
+                del row_sums, row_maxs, sparsity, gate, scaling_factor
+
+                # --- 剪枝 ---
+                mask = channel_data.abs() < pruning_threshold
+                total_pruned += mask.sum().item()
+                total_count += mask.numel()
+                channel_data.masked_fill_(mask, 0.0)
+                del mask
+
             # 情绪回归
-            self.mood_bias *= 0.9
-            
-            return pruned_count, total_count, global_decay
+            self.mood_bias.mul_(0.9)
+
+            # 强制清理 GPU 缓存
+            if self.synapse_tensor.is_cuda:
+                torch.cuda.empty_cache()
+
+            return total_pruned, total_count, global_decay
 
     def forward(self, input_indices, steps=3, channel_weights=None):
         batch_size, seq_len = input_indices.shape
