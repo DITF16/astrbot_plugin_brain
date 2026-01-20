@@ -237,8 +237,7 @@ class CognitiveBrainPlugin(Star):
         返回 0.0 ~ 1.0 的压力值
         """
         try:
-            synapse = self.brain.model.synapse_weights
-            # 计算非零连接的比例
+            synapse = self.brain.model.synapse_tensor
             total_elements = synapse.numel()
             nonzero_count = (synapse.abs() > 0.01).sum().item()
             density = nonzero_count / total_elements
