@@ -147,11 +147,6 @@ class CognitiveGraphModel(nn.Module):
             current_thought = torch.relu(current_thought - 0.1)
             current_thought += self.mood_bias * 0.05
 
-        # === 新增：自动学习相邻词的连接 ===
-        if self.training:
-            self.learn_from_input(input_indices)
-            self._learn_associations(input_indices)  # 新增！
-
         return current_thought
 
     def _learn_associations(self, input_indices, learning_rate=0.1):
