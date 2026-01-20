@@ -464,6 +464,28 @@ class CognitiveBrainPlugin(Star):
         )
         yield event.plain_result(msg)
 
+
+    @filter.command('夏娃认知状态')
+    async def brain_cognition_status(self, event: AstrMessageEvent):
+        status = self.brain.get_working_memory_status()
+        wm = status["working_memory"]
+
+        lines = [
+            f"🧠 夏娃认知状态",
+            f"━━━━━━━━━━━━━━━━━━",
+            f"📊 词汇量: {self.brain.next_idx}/{self.brain.vocab_limit}",
+            f"💭 工作记忆: {wm['used']}/{wm['capacity']} 槽位",
+            f"🎯 当前焦点: {wm['focus'] or '无'}",
+            f"📝 话题: {status['current_topic'] or '无'}",
+            f"",
+            f"💡 活跃概念:",
+        ]
+
+        for concept in wm["concepts"][:5]:
+            lines.append(f"  • {concept['word']} ({concept['activation']}) [{concept['source']}]")
+
+        yield event.plain_result("\n".join(lines))
+
     async def terminate(self):
         """插件关闭时的清理工作"""
         logger.info("[夏娃模型] 系统关闭，保存记忆中...")
