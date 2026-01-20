@@ -486,6 +486,157 @@ class CognitiveBrainPlugin(Star):
 
         yield event.plain_result("\n".join(lines))
 
+    @filter.command("夏娃推理")
+    async def causal_reasoning(self, event: AstrMessageEvent):
+        """因果推理命令"""
+        if not self._is_allowed(event):
+            return
+
+        text = event.message_str
+        # 移除命令前缀
+        query = text.replace("夏娃推理", "").strip()
+
+        if not query:
+            yield event.plain_result(
+                "🧠 因果推理帮助\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "用法: 夏娃推理 <问题>\n\n"
+                "支持的问题类型:\n"
+                "• 为什么... (查找原因)\n"
+                "• 如何/怎么... (查找方法)\n"
+                "• 如果...会怎样 (预测后果)\n\n"
+                "示例:\n"
+                "• 夏娃推理 为什么会下雨\n"
+                "• 夏娃推理 如何减肥\n"
+                "• 夏娃推理 如果熬夜会怎样"
+            )
+            return
+
+        try:
+            result = self.brain.reason(query)
+
+            lines = [
+                f"🔗 因果推理结果",
+                f"━━━━━━━━━━━━━━━━━━",
+                f"❓ 问题类型: {self._translate_reasoning_type(result.reasoning_type)}",
+                f"🎯 核心概念: {result.query_concept}",
+                f"📊 置信度: {result.confidence:.1%}",
+                f""
+            ]
+
+            if result.success and result.primary_path:
+                lines.append(f"🔗 因果链:")
+                lines.append(f"   {result.primary_path.to_arrow_string()}")
+
+                if result.alternative_paths:
+                    lines.append(f"\n📋 其他可能:")
+                    for i, path in enumerate(result.alternative_paths[:2], 1):
+                        lines.append(f"   {i}. {path.to_arrow_string()}")
+
+            lines.append(f"\n💡 解释:")
+            lines.append(f"   {result.explanation}")
+
+            if result.keywords:
+                lines.append(f"\n🏷️ 关键词: {', '.join(result.keywords[:5])}")
+
+            yield event.plain_result("\n".join(lines))
+
+        except Exception as e:
+            logger.error(f"[夏娃模型] 推理失败: {e}")
+            yield event.plain_result(f"😵 推理过程出错了: {e}")
+
+    @filter.command("夏娃因果图")
+    async def show_causal_graph(self, event: AstrMessageEvent):
+        """显示概念的因果子图"""
+        if not self._is_allowed(event):
+            return
+
+        text = event.message_str
+        concept = text.replace("夏娃因果图", "").strip()
+
+        if not concept:
+            yield event.plain_result(
+                "用法: 夏娃因果图 <概念>\n"
+                "示例: 夏娃因果图 下雨"
+            )
+            return
+
+        if concept not in self.brain.word2idx:
+            yield event.plain_result(f"❌ 我还不认识 '{concept}' 这个概念")
+            return
+
+        idx = self.brain.word2idx[concept]
+
+        # 获取直接原因
+        direct_causes = self.brain.model.get_direct_causes(idx, top_k=5)
+        # 获取直接后果
+        direct_effects = self.brain.model.get_direct_effects(idx, top_k=5)
+
+        lines = [
+            f"🕸️ 概念 [{concept}] 的因果图",
+            f"━━━━━━━━━━━━━━━━━━━━━━━",
+            f""
+        ]
+
+        if direct_causes:
+            lines.append("⬆️ 原因 (导致它的):")
+            for cause_idx, strength in direct_causes:
+                cause_word = self.brain.idx2word.get(cause_idx, "?")
+                bar = "█" * int(strength * 10)
+                lines.append(f"   {cause_word} ─({strength:.2f})→ [{concept}]")
+        else:
+            lines.append("⬆️ 原因: (暂无记录)")
+
+        lines.append("")
+
+        if direct_effects:
+            lines.append("⬇️ 后果 (它导致的):")
+            for effect_idx, strength in direct_effects:
+                effect_word = self.brain.idx2word.get(effect_idx, "?")
+                lines.append(f"   [{concept}] ─({strength:.2f})→ {effect_word}")
+        else:
+            lines.append("⬇️ 后果: (暂无记录)")
+
+        yield event.plain_result("\n".join(lines))
+
+    @filter.command("夏娃因果统计")
+    async def causal_stats(self, event: AstrMessageEvent):
+        """显示因果图统计信息"""
+        if not self._is_allowed(event):
+            return
+
+        try:
+            stats = self.brain.get_causal_stats()
+
+            lines = [
+                f"📊 因果图统计",
+                f"━━━━━━━━━━━━━━━━━━",
+                f"🔗 因果连接数: {stats['total_connections']:,}",
+                f"📈 图密度: {stats['density']:.4%}",
+                f"💪 平均强度: {stats['avg_strength']:.3f}",
+                f"🏆 最强连接: {stats['strongest_link'][0]} → {stats['strongest_link'][1]}",
+                f"   强度: {stats['max_strength']:.3f}",
+            ]
+
+            yield event.plain_result("\n".join(lines))
+
+        except Exception as e:
+            yield event.plain_result(f"❌ 获取统计失败: {e}")
+
+    def _translate_reasoning_type(self, rt) -> str:
+        """翻译推理类型"""
+        from .causal_reasoning import ReasoningType
+        translations = {
+            ReasoningType.WHY: "追溯原因 (为什么)",
+            ReasoningType.HOW: "寻找方法 (如何)",
+            ReasoningType.WHAT_IF: "假设推演 (如果)",
+            ReasoningType.PREDICT: "预测后果",
+            ReasoningType.EXPLAIN: "关系解释",
+            ReasoningType.NONE: "一般联想",
+        }
+        return translations.get(rt, "未知")
+
+
     async def terminate(self):
         """插件关闭时的清理工作"""
         logger.info("[夏娃模型] 系统关闭，保存记忆中...")
