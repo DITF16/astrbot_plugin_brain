@@ -238,7 +238,10 @@ class BrainInterface:
                     h_idx = self._get_or_add_word(str(head))
                     t_idx = self._get_or_add_word(str(tail))
                     if h_idx != 1 and t_idx != 1:
-                        indices_triplets.append((h_idx, int(rel), t_idx))
+                        REL_MAP = {0: 'is_a', 1: 'has', 2: 'cause'}
+                        rel_str = REL_MAP.get(int(rel), None)
+                        if rel_str:
+                            indices_triplets.append((h_idx, rel_str, t_idx))
                         learned_concepts.append(f"{head}->{RELATION_MAP.get(int(rel), '?')}->{tail}")
                 
                 if indices_triplets:
