@@ -60,43 +60,41 @@ class CognitiveGraphModel(nn.Module):
                 else:
                     self.mood_bias[v] -= 0.1
 
-    def process_sleep_cycle(self, pruning_threshold=0.05):
+    def process_sleep_cycle(self, pruning_threshold=0.01):  # 从0.05降到0.01
         """
-        [V3.2] 睡眠机制：内存优化版本 - 分通道处理
+        [V3.3] 睡眠机制：修复过度清理
         """
         with torch.no_grad():
             total_pruned = 0
             total_count = 0
 
-            # === 1. 压力检测 (只计算标量，不创建大张量) ===
-            target_capacity = float(self.vocab_size) * 10.0
-            current_energy = self.synapse_tensor.abs().sum().item()  # 转为 Python 标量
+            # === 1. 压力检测 ===
+            target_capacity = float(self.vocab_size) * 20.0  # 从10提高到20
+            current_energy = self.synapse_tensor.abs().sum().item()
 
             if current_energy > target_capacity:
                 pressure_ratio = target_capacity / current_energy
-                global_decay = max(pressure_ratio, 0.8)
+                global_decay = max(pressure_ratio, 0.9)  # 从0.8提高到0.9
             else:
                 global_decay = 1.0
 
-            # === 2-5: 分通道处理，大幅减少内存峰值 ===
             num_channels = self.synapse_tensor.shape[0]
 
             for c in range(num_channels):
-                # 获取单通道视图 [vocab_size, vocab_size] ≈ 400MB
                 channel_data = self.synapse_tensor.data[c]
 
-                # --- 晶体化保护 (in-place) ---
+                # --- 晶体化保护 (降低保护阈值) ---
                 weights_abs = channel_data.abs()
-                shield = torch.sigmoid((weights_abs - 0.5) * 5.0)
+                shield = torch.sigmoid((weights_abs - 0.2) * 8.0)  # 从0.5降到0.2
                 final_decay_c = global_decay * (1.0 - shield) + shield
                 channel_data.mul_(final_decay_c)
-                del weights_abs, shield, final_decay_c  # 立即释放
+                del weights_abs, shield, final_decay_c
 
-                # --- 对比度增强 (in-place) ---
+                # --- 对比度增强 (更温和) ---
                 signs = torch.sign(channel_data)
-                channel_data.abs_()  # in-place abs
-                channel_data.pow_(1.1)  # in-place pow
-                channel_data.mul_(signs)  # in-place 恢复符号
+                channel_data.abs_()
+                channel_data.pow_(1.02)  # 从1.1降到1.02，非常温和
+                channel_data.mul_(signs)
                 del signs
 
                 # --- 动态能量守恒 ---
@@ -106,25 +104,23 @@ class CognitiveGraphModel(nn.Module):
                 gate = torch.tanh(sparsity * 5.0)
 
                 counts = self.word_counts
-                base_limit = 10.0
-                freq_bonus = torch.log1p(counts).view(-1, 1).to(channel_data.device) * 2.0
+                base_limit = 30.0  # 从10提高到30
+                freq_bonus = torch.log1p(counts).view(-1, 1).to(channel_data.device) * 3.0
 
                 dynamic_limits = base_limit + freq_bonus * gate
                 scaling_factor = (dynamic_limits / row_sums).clamp(max=1.0)
                 channel_data.mul_(scaling_factor)
                 del row_sums, row_maxs, sparsity, gate, scaling_factor
 
-                # --- 剪枝 ---
+                # --- 剪枝 (只清理真正的噪声) ---
                 mask = channel_data.abs() < pruning_threshold
                 total_pruned += mask.sum().item()
                 total_count += mask.numel()
                 channel_data.masked_fill_(mask, 0.0)
                 del mask
 
-            # 情绪回归
-            self.mood_bias.mul_(0.9)
+            self.mood_bias.mul_(0.95)  # 从0.9改为0.95
 
-            # 强制清理 GPU 缓存
             if self.synapse_tensor.is_cuda:
                 torch.cuda.empty_cache()
 
