@@ -8,6 +8,7 @@ import asyncio
 from .cognitive_graph_model import CognitiveGraphModel
 from .cognitive_trainer import HebbianTrainer
 from astrbot.api import logger
+from .working_memory import WorkingMemory, EpisodicBuffer
 
 # 逻辑关系映射
 RELATION_MAP = {
@@ -159,6 +160,17 @@ class BrainInterface:
         # 4. 加载存档
         self.load_brain()
 
+        # 5. 工作记忆系统
+        brain_conf = config.get("brain", {})
+        wm_capacity = brain_conf.get("working_memory_capacity", 7)
+        wm_decay = brain_conf.get("working_memory_decay", 60.0)
+
+        self.working_memory = WorkingMemory(
+            capacity=wm_capacity,
+            decay_half_life=wm_decay
+        )
+        self.episodic_buffer = EpisodicBuffer(max_turns=10)
+
     def load_brain(self):
         if os.path.exists(self.model_path):
             try:
@@ -223,12 +235,15 @@ class BrainInterface:
             indices.append(idx)
         return indices
 
-    async def learn_dual_coding(self, text):
+    async def learn_dual_coding(self, text, conversation_id: str = None, speaker: str = "user"):
         """
         [双重编码核心]
         """
+        # 绑定对话上下文
+        if conversation_id:
+            self.working_memory.bind_context(conversation_id, speaker)
+
         analysis = await self.logic_engine.analyze(text)
-        
         if analysis["type"] == "logic":
             triplets = analysis.get("triplets", [])
             if triplets:
@@ -243,39 +258,67 @@ class BrainInterface:
                         if rel_str:
                             indices_triplets.append((h_idx, rel_str, t_idx))
                         learned_concepts.append(f"{head}->{RELATION_MAP.get(int(rel), '?')}->{tail}")
-                
+
+                        # 将学到的逻辑概念加入工作记忆
+                        self.working_memory.attend(h_idx, str(head), activation=0.9, source="logic")
+                        self.working_memory.attend(t_idx, str(tail), activation=0.8, source="logic")
                 if indices_triplets:
                     cnt = self.trainer.train_step_logical(indices_triplets)
                     return f"Logic Imprinted: {', '.join(learned_concepts)}"
-        
         indices = self._encode(text)
         if len(indices) >= 2:
+            # 将输入词加入工作记忆
+            words = [self.idx2word.get(idx, "") for idx in indices]
+            self.working_memory.attend_batch(indices, words)
+
+            # 记录到情景缓冲区
+            self.episodic_buffer.add_turn(speaker, text, indices, words)
+
             loss = self.trainer.train_step_associative(indices)
             return f"Intuition Reinforced (Loss: {loss:.4f})"
         return "Ignored (Too short)"
 
-    async def reply(self, text):
+    async def reply(self, text, conversation_id: str = None):
         """
         [主动回复]
         1. 编码输入
         2. 图模型生成关键词索引 (indices)
         3. 表达中枢将关键词转为句子
+        4. 利用工作记忆
         """
+        # 绑定上下文
+        if conversation_id:
+            self.working_memory.bind_context(conversation_id)
+
         indices = self._encode(text)
-        if not indices: return "", []
-        
-        input_tensor = torch.tensor([indices], device=self.device)
+        if not indices:
+            return "", []
+
+        # 获取工作记忆中的上下文
+        context_indices = self.working_memory.get_context_indices()
+
+        # 将输入和上下文合并
+        words = [self.idx2word.get(idx, "") for idx in indices]
+        self.working_memory.attend_batch(indices, words)
+
+        # 合并输入和上下文，去重
+        combined_indices = list(dict.fromkeys(indices + context_indices))
+
+        input_tensor = torch.tensor([combined_indices], device=self.device)
         out_indices = self.model.generate_reply(input_tensor)
-        
         # 将索引转回词
         reply_words = [self.idx2word.get(idx, "") for idx in out_indices]
-        # 过滤掉 PAD 和 UNK
         keywords = [w for w in reply_words if w not in ["<PAD>", "<UNK>", ""]]
-        
         # 调用表达中枢进行串联
         final_reply = await self.expression_engine.articulate(text, keywords)
-        
         return final_reply, out_indices
+
+    def get_working_memory_status(self) -> dict:
+        """获取工作记忆状态"""
+        return {
+            "working_memory": self.working_memory.get_status(),
+            "current_topic": self.episodic_buffer.get_topic()
+        }
 
     def reinforce(self, indices, reward_sign):
         if not indices: return
