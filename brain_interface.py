@@ -1,12 +1,9 @@
-from typing import Dict
-
+from typing import Dict, Optional
 import torch
 import os
 import jieba
 import re
 import json
-import aiohttp
-import asyncio
 from .cognitive_graph_model import CognitiveGraphModel
 from .cognitive_trainer import HebbianTrainer
 from astrbot.api import logger
@@ -20,65 +17,92 @@ RELATION_MAP = {
     2: "CAUSES"
 }
 
+
 class LogicDiscriminator:
     """
     [前额叶] 逻辑判别器
-    负责调用外部 LLM 提取逻辑三元组
+    负责调用 AstrBot 框架的 LLM Provider 提取逻辑三元组
     """
-    def __init__(self, config: dict):
+
+    def __init__(self, config: dict, context=None):
         self.enable = config.get("enable", False)
-        self.api_base = config.get("api_base", "https://api.openai.com/v1")
-        self.api_key = config.get("api_key", "")
-        self.model_name = config.get("model", "gpt-3.5-turbo")
+        self.provider_name = config.get("provider_name", "")
         self.system_prompt = config.get("system_prompt", "")
-        self.timeout = config.get("timeout", 5)
         self.temperature = config.get("temperature", 0.0)
+        self.context = context
 
-    async def analyze(self, text: str):
-        if not self.enable or not self.api_key:
+        # 最大重试次数
+        self.max_retries = config.get("max_retries", 2)
+
+    async def analyze(self, text: str) -> dict:
+        """
+        分析文本，提取逻辑三元组
+        """
+        if not self.enable:
             return {"type": "intuition"}
 
-        if len(text) < 4: 
+        if len(text) < 4:
             return {"type": "intuition"}
 
-        url = f"{self.api_base}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": self.model_name,
-            "messages": [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": text}
-            ],
-            "temperature": self.temperature,
-            "response_format": {"type": "json_object"},
-            "enable_thinking": False  # 添加: 禁用思考模式 (兼容 Qwen3/DeepSeek)
-        }
+        # 检查 context 和 provider
+        if not self.context or not self.provider_name:
+            logger.debug("[Brain] Logic Discriminator: No context or provider configured")
+            return {"type": "intuition"}
 
+        # 获取 Provider
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=headers, timeout=self.timeout) as resp:
-                    if resp.status != 200:
-                        logger.warning(f"[Brain] Logic LLM Error {resp.status}: {await resp.text()}")
-                        return {"type": "intuition"}
-                    
-                    data = await resp.json()
-                    content = data["choices"][0]["message"]["content"]
-                    
-                    try:
-                        result = json.loads(content)
-                        if result.get("type") == "logic" and "triplets" in result:
-                            return result
-                        return {"type": "intuition"}
-                    except json.JSONDecodeError:
-                        return {"type": "intuition"}
-
+            provider = self.context.get_provider_by_id(self.provider_name)
+            if not provider:
+                logger.warning(f"[Brain] Logic Provider not found: {self.provider_name}")
+                return {"type": "intuition"}
         except Exception as e:
-            error_msg = str(e) if str(e) else type(e).__name__  # 修改: 显示异常类型
-            logger.warning(f"[Brain] Logic Discriminator Failed: {error_msg}")
+            logger.warning(f"[Brain] Failed to get logic provider: {e}")
             return {"type": "intuition"}
+
+        # 构建提示词
+        prompt = f"{self.system_prompt}\n\nAnalyze this text:\n{text}"
+
+        # 重试机制
+        for attempt in range(self.max_retries + 1):
+            try:
+                # 调用 AstrBot 框架的 LLM
+                llm_response = await provider.text_chat(
+                    prompt=prompt,
+                    contexts=[]  # 不需要上下文
+                )
+
+                content = llm_response.completion_text.strip()
+                logger.debug(f"[Brain] Logic LLM Response: {content[:200]}...")
+
+                # 尝试提取 JSON
+                try:
+                    # 处理 markdown 代码块
+                    if "```json" in content:
+                        content = content.split("```json")[1].split("```")[0]
+                    elif "```" in content:
+                        content = content.split("```")[1].split("```")[0]
+                    content = content.strip()
+
+                    result = json.loads(content)
+
+                    if result.get("type") == "logic" and "triplets" in result:
+                        logger.debug(f"[Brain] Logic extracted: {result}")
+                        return result
+                    return {"type": "intuition"}
+
+                except json.JSONDecodeError as e:
+                    logger.warning(f"[Brain] Logic JSON Parse Error (attempt {attempt + 1}): {e}")
+                    if attempt == self.max_retries:
+                        return {"type": "intuition"}
+                    continue
+
+            except Exception as e:
+                error_msg = str(e) if str(e) else type(e).__name__
+                logger.warning(f"[Brain] Logic Discriminator Failed (attempt {attempt + 1}): {error_msg}")
+                if attempt == self.max_retries:
+                    return {"type": "intuition"}
+
+        return {"type": "intuition"}
 
 
 class ExpressionCenter:
@@ -86,54 +110,54 @@ class ExpressionCenter:
     [布罗卡氏区] 表达中枢
     负责将脑图生成的关键词串联成通顺的回复
     """
-    def __init__(self, config: dict, logic_api_key: str = ""):
-        self.enable = config.get("enable", False)
-        self.api_base = config.get("api_base", "https://api.openai.com/v1")
-        # 允许回退使用 Logic 的 Key
-        self.api_key = config.get("api_key") or logic_api_key
-        self.model_name = config.get("model", "gpt-3.5-turbo")
-        self.system_prompt = config.get("system_prompt", "")
-        self.timeout = config.get("timeout", 10)
-        self.temperature = config.get("temperature", 0.7)
 
-    async def articulate(self, user_input: str, keywords: list):
+    def __init__(self, config: dict, context=None):
+        self.enable = config.get("enable", False)
+        self.provider_name = config.get("provider_name", "")
+        self.system_prompt = config.get("system_prompt", "")
+        self.temperature = config.get("temperature", 0.7)
+        self.context = context
+
+    async def articulate(self, user_input: str, keywords: list) -> str:
         """
         生成自然语言回复
         """
         if not keywords:
             return ""
 
-        # 如果未启用或者没有 key，直接回退到简单的词拼接
-        if not self.enable or not self.api_key:
+        # 如果未启用，直接回退到简单的词拼接
+        if not self.enable:
             return "".join(keywords)
 
-        prompt = f"User Input: {user_input}\nMemory Keywords: {', '.join(keywords)}"
+        # 检查 context 和 provider
+        if not self.context or not self.provider_name:
+            logger.debug("[Brain] Expression Center: No context or provider configured")
+            return "".join(keywords)
 
-        url = f"{self.api_base}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": self.model_name,
-            "messages": [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": self.temperature,
-            "enable_thinking": False  # 添加: 禁用思考模式 (兼容 Qwen3)
-        }
+        # 获取 Provider
+        try:
+            provider = self.context.get_provider_by_id(self.provider_name)
+            if not provider:
+                logger.warning(f"[Brain] Expression Provider not found: {self.provider_name}")
+                return "".join(keywords)
+        except Exception as e:
+            logger.warning(f"[Brain] Failed to get expression provider: {e}")
+            return "".join(keywords)
+
+        # 构建提示词
+        prompt = f"{self.system_prompt}\n\nUser Input: {user_input}\nMemory Keywords: {', '.join(keywords)}"
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=headers, timeout=self.timeout) as resp:
-                    if resp.status != 200:
-                        logger.warning(f"[Brain] Expression LLM Error {resp.status}: {await resp.text()}")
-                        return "".join(keywords) # Fallback
-                    
-                    data = await resp.json()
-                    content = data["choices"][0]["message"]["content"]
-                    return content.strip()
+            # 调用 AstrBot 框架的 LLM
+            llm_response = await provider.text_chat(
+                prompt=prompt,
+                contexts=[]
+            )
+
+            content = llm_response.completion_text.strip()
+            logger.debug(f"[Brain] Expression LLM Response: {content[:100]}...")
+
+            return content if content else "".join(keywords)
 
         except Exception as e:
             error_msg = str(e) if str(e) else type(e).__name__
@@ -142,18 +166,19 @@ class ExpressionCenter:
 
 
 class BrainInterface:
-    def __init__(self, config: dict, model_path="my_brain.pth", vocab_limit=10000):
+    def __init__(self, config: dict, context=None, model_path="my_brain.pth", vocab_limit=10000):
         self.model_path = model_path
         self.vocab_limit = vocab_limit
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # 1. 加载 LLM 配置
+        self.context = context
+
+        # 1. 加载 LLM 配置 (使用新的 Provider 方式)
         llm_conf = config.get("llm", {})
         expr_conf = config.get("expression_llm", {})
-        
-        self.logic_engine = LogicDiscriminator(llm_conf)
-        # 传递 logic key 作为 fallback
-        self.expression_engine = ExpressionCenter(expr_conf, logic_api_key=llm_conf.get("api_key", ""))
+
+        # 初始化逻辑判别器和表达中枢，传入 context
+        self.logic_engine = LogicDiscriminator(llm_conf, context=context)
+        self.expression_engine = ExpressionCenter(expr_conf, context=context)
 
         # 2. 词表管理
         self.word2idx = {"<PAD>": 0, "<UNK>": 1}

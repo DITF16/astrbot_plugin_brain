@@ -27,32 +27,24 @@
   "llm": {
     "type": "object",
     "description": "逻辑判别器 (Logic Discriminator)",
-    "hint": "前额叶：负责提取输入文本中的逻辑关系",
+    "hint": "前额叶：负责提取输入文本中的逻辑关系，使用 AstrBot 已配置的模型",
     "items": {
       "enable": {
         "type": "bool",
         "description": "启用",
         "default": true
       },
-      "api_base": {
+      "provider_name": {
         "type": "string",
-        "description": "API Base URL",
-        "default": "https://api.openai.com/v1"
-      },
-      "api_key": {
-        "type": "string",
-        "description": "API Key",
+        "description": "LLM 提供商",
+        "hint": "选择用于逻辑提取的模型，建议使用快速小模型如 Gemini Flash",
         "default": "",
-        "obvious_hint": true
-      },
-      "model": {
-        "type": "string",
-        "description": "模型名称",
-        "default": "gpt-4o-mini"
+        "_special": "select_provider"
       },
       "temperature": {
         "type": "float",
         "description": "温度",
+        "hint": "建议 0.0-0.1 以保证逻辑提取的稳定性",
         "default": 0.0
       },
       "system_prompt": {
@@ -60,38 +52,30 @@
         "description": "系统提示词",
         "default": "You are a Logic Extractor. Analyze the user's input.\nReturn JSON ONLY.\nIf explicit logic exists:\n{\"type\": \"logic\", \"triplets\": [[\"Subject\", relation_id, \"Object\"]]} \nRelation IDs: 0=IS_A (Definition), 1=HAS_PROP (Attribute), 2=CAUSES (Causality).\nIf it is chat/vague/feeling:\n{\"type\": \"intuition\"}"
       },
-      "timeout": {
+      "max_retries": {
         "type": "int",
-        "description": "超时时间",
-        "default": 10
+        "description": "最大重试次数",
+        "hint": "当LLM返回无效JSON时的重试次数",
+        "default": 2
       }
     }
   },
   "expression_llm": {
     "type": "object",
     "description": "表达中枢 (Expression Center)",
-    "hint": "布罗卡氏区：负责将脑图生成的关键词串联成通顺的句子",
+    "hint": "布罗卡氏区：负责将脑图生成的关键词串联成通顺的句子，使用 AstrBot 已配置的模型",
     "items": {
       "enable": {
         "type": "bool",
         "description": "启用",
         "default": true
       },
-      "api_base": {
+      "provider_name": {
         "type": "string",
-        "description": "API Base URL",
-        "default": "https://api.openai.com/v1"
-      },
-      "api_key": {
-        "type": "string",
-        "description": "API Key",
-        "hint": "留空则共用逻辑判别器的 Key",
-        "default": ""
-      },
-      "model": {
-        "type": "string",
-        "description": "模型名称",
-        "default": "gpt-4o-mini"
+        "description": "LLM 提供商",
+        "hint": "选择用于语言表达的模型，可与逻辑判别器使用不同模型",
+        "default": "",
+        "_special": "select_provider"
       },
       "temperature": {
         "type": "float",
@@ -103,11 +87,6 @@
         "type": "text",
         "description": "系统提示词",
         "default": "You are the 'Expression Center' of a robot girl named Eve.\nI will give you:\n1. User's Input\n2. Keywords retrieved from Memory Graph\n\nYour task: Combine the keywords into a natural, cute, and coherent response based on the context. \n- Keep it short.\n- Maintain the persona (tsundere/cute).\n- Do NOT output explanations."
-      },
-      "timeout": {
-        "type": "int",
-        "description": "超时时间",
-        "default": 10
       }
     }
   },
@@ -124,6 +103,18 @@
         "type": "int",
         "description": "自动保存间隔(秒)",
         "default": 300
+      },
+      "working_memory_capacity": {
+        "type": "int",
+        "description": "工作记忆容量",
+        "hint": "同时能保持活跃的概念数量",
+        "default": 7
+      },
+      "working_memory_decay": {
+        "type": "float",
+        "description": "工作记忆衰减半衰期(秒)",
+        "hint": "概念在工作记忆中的衰减速度",
+        "default": 60.0
       }
     }
   },

@@ -128,8 +128,10 @@ class CognitiveBrainPlugin(Star):
         brain_config = config.get("brain") or {}
         vocab_limit = brain_config.get("vocab_limit", 10000)
 
+        # 传入 context 给 BrainInterface
         self.brain = BrainInterface(
             config=dict(config),
+            context=context,
             model_path=BRAIN_PATH,
             vocab_limit=vocab_limit
         )
