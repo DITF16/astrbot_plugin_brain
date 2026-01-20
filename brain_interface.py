@@ -252,11 +252,6 @@ class BrainInterface:
         if len(indices) >= 2:
             # 联想学习
             loss = self.trainer.train_step_associative(indices)
-
-            # 新增：直接调用关联学习
-            indices_tensor = torch.tensor([indices], device=self.device)
-            self.model._learn_associations(indices_tensor)
-
             return f"Intuition Reinforced (Loss: {loss:.4f})"
         return "Ignored (Too short)"
 
