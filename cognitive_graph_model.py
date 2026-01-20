@@ -1,3 +1,5 @@
+from typing import List, Tuple, Dict
+
 import torch
 import torch.nn as nn
 import math
@@ -243,3 +245,158 @@ class CognitiveGraphModel(nn.Module):
             current_idx = next_idx
 
         return reply_indices
+
+    # =========================================================
+    # 🔗 因果推理支持方法
+    # =========================================================
+
+    def get_direct_effects(self, concept_idx: int, top_k: int = 10,
+                           min_strength: float = 0.1) -> List[Tuple[int, float]]:
+        """
+        获取概念的直接因果后果
+
+        Args:
+            concept_idx: 概念索引
+            top_k: 返回前k个结果
+            min_strength: 最小强度阈值
+
+        Returns:
+            [(effect_idx, strength), ...]
+        """
+        if concept_idx <= 1:
+            return []
+
+        effects = self.synapse_tensor[CHANNEL_CAUSES, concept_idx]
+
+        # 过滤低于阈值的
+        mask = effects > min_strength
+        if not mask.any():
+            return []
+
+        # 获取 top-k
+        values, indices = torch.topk(effects, min(top_k + 2, len(effects)))
+
+        results = []
+        for val, idx in zip(values.tolist(), indices.tolist()):
+            if val < min_strength:
+                break
+            if idx <= 1 or idx == concept_idx:
+                continue
+            results.append((idx, val))
+
+        return results[:top_k]
+
+    def get_direct_causes(self, concept_idx: int, top_k: int = 10,
+                          min_strength: float = 0.1) -> List[Tuple[int, float]]:
+        """
+        获取概念的直接原因 (逆向因果)
+
+        Args:
+            concept_idx: 概念索引
+            top_k: 返回前k个结果
+            min_strength: 最小强度阈值
+
+        Returns:
+            [(cause_idx, strength), ...]
+        """
+        if concept_idx <= 1:
+            return []
+
+        # 转置因果矩阵的对应列
+        causes = self.synapse_tensor[CHANNEL_CAUSES, :, concept_idx]
+
+        mask = causes > min_strength
+        if not mask.any():
+            return []
+
+        values, indices = torch.topk(causes, min(top_k + 2, len(causes)))
+
+        results = []
+        for val, idx in zip(values.tolist(), indices.tolist()):
+            if val < min_strength:
+                break
+            if idx <= 1 or idx == concept_idx:
+                continue
+            results.append((idx, val))
+
+        return results[:top_k]
+
+    def strengthen_causal_link(self, cause_idx: int, effect_idx: int,
+                               delta: float = 0.5) -> None:
+        """
+        强化因果连接
+
+        Args:
+            cause_idx: 原因概念索引
+            effect_idx: 结果概念索引
+            delta: 强化量
+        """
+        if cause_idx <= 1 or effect_idx <= 1:
+            return
+
+        with torch.no_grad():
+            current = self.synapse_tensor[CHANNEL_CAUSES, cause_idx, effect_idx]
+            # 使用衰减增量避免爆炸
+            effective_delta = delta / (1.0 + current.abs().item())
+            self.synapse_tensor[CHANNEL_CAUSES, cause_idx, effect_idx] += effective_delta
+
+            # 钳位
+            self.synapse_tensor[CHANNEL_CAUSES, cause_idx, effect_idx].clamp_(-10.0, 10.0)
+
+    def get_causal_subgraph(self, center_idx: int, radius: int = 2) -> Dict:
+        """
+        获取以某概念为中心的因果子图
+
+        Args:
+            center_idx: 中心概念索引
+            radius: 搜索半径
+
+        Returns:
+            {
+                "nodes": [(idx, word), ...],
+                "edges": [(source_idx, target_idx, strength), ...]
+            }
+        """
+        if center_idx <= 1:
+            return {"nodes": [], "edges": []}
+
+        nodes = set()
+        edges = []
+
+        # BFS
+        queue = [(center_idx, 0)]
+        visited = set()
+
+        while queue:
+            current, depth = queue.pop(0)
+
+            if current in visited:
+                continue
+            visited.add(current)
+            nodes.add(current)
+
+            if depth >= radius:
+                continue
+
+            # 正向: 当前节点的后果
+            effects = self.synapse_tensor[CHANNEL_CAUSES, current]
+            for eff_idx in (effects > 0.1).nonzero(as_tuple=True)[0].tolist():
+                if eff_idx > 1:
+                    strength = effects[eff_idx].item()
+                    edges.append((current, eff_idx, strength))
+                    if eff_idx not in visited:
+                        queue.append((eff_idx, depth + 1))
+
+            # 逆向: 导致当前节点的原因
+            causes = self.synapse_tensor[CHANNEL_CAUSES, :, current]
+            for cause_idx in (causes > 0.1).nonzero(as_tuple=True)[0].tolist():
+                if cause_idx > 1:
+                    strength = causes[cause_idx].item()
+                    edges.append((cause_idx, current, strength))
+                    if cause_idx not in visited:
+                        queue.append((cause_idx, depth + 1))
+
+        return {
+            "nodes": list(nodes),
+            "edges": edges
+        }
