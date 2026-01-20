@@ -250,7 +250,6 @@ class BrainInterface:
         
         indices = self._encode(text)
         if len(indices) >= 2:
-            # 联想学习
             loss = self.trainer.train_step_associative(indices)
             return f"Intuition Reinforced (Loss: {loss:.4f})"
         return "Ignored (Too short)"
