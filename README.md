@@ -9,7 +9,7 @@
 [![Version](https://img.shields.io/badge/version-v1.0.0-green?style=flat-square)]()
 [![Python](https://img.shields.io/badge/Python-3.8+-yellow?style=flat-square)]()
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-orange?style=flat-square)]()
-[![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)]()
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](https://www.gnu.org/licenses/agpl-3.0.html)
 
 <img src="https://img.shields.io/badge/🧠_Cognitive_Graph-模拟人脑认知结构-purple?style=for-the-badge" />
 <img src="https://img.shields.io/badge/💤_Sleep_Cycle-仿生睡眠机制-blue?style=for-the-badge" />
@@ -320,7 +320,7 @@ python run_learning.py
 
 ## 📜 许可证
 
-MIT License © 2024 [DITF16](https://github.com/DITF16)
+AGPL-3.0 License © 2024 [DITF16](https://github.com/DITF16)
 
 ---
 
